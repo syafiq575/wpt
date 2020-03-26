@@ -80,9 +80,10 @@ class TestharnessResultConverter(object):
 testharness_result_converter = TestharnessResultConverter()
 
 
-def hash_screenshot(data):
-    """Computes the sha1 checksum of a base64-encoded screenshot."""
-    return hashlib.sha1(base64.b64decode(data)).hexdigest()
+def hash_screenshots(screenshots):
+    """Computes the sha1 checksum of a list of base64-encoded screenshots."""
+    return [hashlib.sha1(base64.b64decode(screenshot)).hexdigest()
+            for screenshot in screenshots]
 
 
 def _ensure_hash_in_reftest_screenshots(extra):
@@ -98,7 +99,7 @@ def _ensure_hash_in_reftest_screenshots(extra):
             # Skip relation strings.
             continue
         if "hash" not in item:
-            item["hash"] = hash_screenshot(item["screenshot"])
+            item["hash"] = hash_screenshots(item["screenshot"])
 
 
 def reftest_result_converter(self, test, result):
@@ -351,16 +352,16 @@ class RefTestImplementation(object):
         key = (test.url, viewport_size, dpi)
 
         if key not in self.screenshot_cache:
-            success, data = self.executor.screenshot(test, viewport_size, dpi)
+            success, data = self.get_screenshot_list(test, viewport_size, dpi)
 
             if not success:
                 return False, data
 
-            screenshot = data
-            hash_value = hash_screenshot(data)
-            self.screenshot_cache[key] = (hash_value, screenshot)
+            screenshots = data
+            hash_value = hash_screenshots(data)
+            self.screenshot_cache[key] = (hash_value, screenshots)
 
-            rv = (hash_value, screenshot)
+            rv = (hash_value, screenshots)
         else:
             rv = self.screenshot_cache[key]
 
@@ -372,24 +373,42 @@ class RefTestImplementation(object):
 
     def is_pass(self, hashes, screenshots, urls, relation, fuzzy):
         assert relation in ("==", "!=")
-        if not fuzzy or fuzzy == ((0,0), (0,0)):
-            equal = hashes[0] == hashes[1]
-            # sometimes images can have different hashes, but pixels can be identical.
-            if not equal:
-                self.logger.info("Image hashes didn't match, checking pixel differences")
-                max_per_channel, pixels_different = self.get_differences(screenshots, urls)
-                equal = pixels_different == 0 and max_per_channel == 0
-        else:
-            max_per_channel, pixels_different = self.get_differences(screenshots, urls)
-            allowed_per_channel, allowed_different = fuzzy
-            self.logger.info("Allowed %s pixels different, maximum difference per channel %s" %
-                             ("-".join(str(item) for item in allowed_different),
-                              "-".join(str(item) for item in allowed_per_channel)))
-            equal = ((pixels_different == 0 and allowed_different[0] == 0) or
-                     (max_per_channel == 0 and allowed_per_channel[0] == 0) or
-                     (allowed_per_channel[0] <= max_per_channel <= allowed_per_channel[1] and
-                      allowed_different[0] <= pixels_different <= allowed_different[1]))
-        return equal if relation == "==" else not equal
+        lhs_hashes, rhs_hashes = hashes
+        lhs_screenshots, rhs_screenshots = screenshots
+
+        if len(lhs_hashes) != len(rhs_hashes):
+            self.logger.info("Got different number of pages")
+            return False
+
+        assert len(lhs_screenshots) == len(lhs_hashes) == len(rhs_screenshots) == len(rhs_hashes)
+
+        for lhs_hash, rhs_hash, lhs_screenshot, rhs_screenshot in zip(lhs_hashes,
+                                                                      rhs_hashes,
+                                                                      lhs_screenshots,
+                                                                      rhs_screenshots):
+            comparison_screenshots = (lhs_screenshot, rhs_screenshot)
+            if not fuzzy or fuzzy == ((0,0), (0,0)):
+                equal = lhs_hash == rhs_hash
+                # sometimes images can have different hashes, but pixels can be identical.
+                if not equal:
+                    self.logger.info("Image hashes didn't match, checking pixel differences")
+                    max_per_channel, pixels_different = self.get_differences(comparison_screenshots,
+                                                                             urls)
+                    equal = pixels_different == 0 and max_per_channel == 0
+            else:
+                max_per_channel, pixels_different = self.get_differences(comparison_screenshots, urls)
+                allowed_per_channel, allowed_different = fuzzy
+                self.logger.info("Allowed %s pixels different, maximum difference per channel %s" %
+                                 ("-".join(str(item) for item in allowed_different),
+                                  "-".join(str(item) for item in allowed_per_channel)))
+                equal = ((pixels_different == 0 and allowed_different[0] == 0) or
+                         (max_per_channel == 0 and allowed_per_channel[0] == 0) or
+                         (allowed_per_channel[0] <= max_per_channel <= allowed_per_channel[1] and
+                          allowed_different[0] <= pixels_different <= allowed_different[1]))
+            result = equal if relation == "==" else not equal
+            if not result:
+                return False
+        return True
 
     def get_differences(self, screenshots, urls):
         from PIL import Image, ImageChops, ImageStat
@@ -485,7 +504,7 @@ class RefTestImplementation(object):
         return value
 
     def retake_screenshot(self, node, viewport_size, dpi):
-        success, data = self.executor.screenshot(node, viewport_size, dpi)
+        success, data = get_screenshot_list(node, viewport_size, dpi)
         if not success:
             return False, data
 
@@ -493,6 +512,12 @@ class RefTestImplementation(object):
         hash_val, _ = self.screenshot_cache[key]
         self.screenshot_cache[key] = hash_val, data
         return True, data
+
+    def get_screenshot_list(self, node, viewport_size, dpi):
+        success, data = self.executor.screenshot(node, viewport_size, dpi)
+        if success and not isinstance(data, list):
+            return success, [data]
+        return success, data
 
 
 class WdspecExecutor(TestExecutor):
