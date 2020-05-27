@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Embedded Enforcement: blocked iframe are cross-origin.</title>
+  <title>Embedded Enforcement: blocked iframes are cross-origin.</title>
   <script src="/resources/testharness.js"></script>
   <script src="/resources/testharnessreport.js"></script>
   <script src="support/testharness-helper.sub.js"></script>
@@ -11,22 +11,50 @@
 
 let SecurityError = 18;
 
-let tests = [
-  {name: "Same-origin" , origin: getOrigin()},
-  {name: "Cross-origin", origin: getCrossOrigin()},
-];
+promise_test(async () => {
+  // 1) Cross-origin documents blocked by embedded enforcement must appears
+  //    cross-origin.
+  let iframe = document.createElement("iframe");
+  let loaded = new Promise(r => iframe.onload = r);
+  iframe.csp = "script-src 'none'";
+  iframe.src = getCrossOrigin() +  "common/blank.html";
+  document.body.appendChild(iframe);
+  await loaded;
+  assert_throws_dom(SecurityError, () => iframe.contentWindow.document);
 
-for(test of tests) {
-  promise_test(async () => {
-    let iframe = document.createElement("iframe");
-    let loaded = new Promise(r => iframe.onload = r);
-    iframe.csp = "script-src 'none'";
-    iframe.src = test.origin +  "common/blank.html";
-    document.body.appendChild(iframe);
-    await loaded;
-    assert_throws_dom(SecurityError, () => iframe.contentWindow.document);
-  }, `${test.name} document blocked by embedded enforcement must appear cross-origin`);
-}
+  // 2) Same-origin documents blocked by embedded enforcement must appears
+  //    cross-origin.
+
+  // Create an iframe that would have been same-origin with the blocked iframe
+  // if it wasn't blocked.
+  let helper_frame = document.createElement("iframe");
+  let loaded_helper = new Promise(r => helper_frame.onload = r);
+  helper_frame.src = getCrossOrigin() +
+    "content-security-policy/embedded-enforcement/support/executor.html"
+  document.body.appendChild(helper_frame);
+  await loaded_helper;
+
+  let reply = new Promise(r => window.onmessage = r);
+  helper_frame.contentWindow.postMessage(`
+    let test = function() {
+      if (parent.frames.length != 2)
+        return "Error: Wrong number of iframes";
+
+      if (parent.frames[1] != window)
+        return "Error: Wrong frame index for the second iframe";
+
+      try {
+        parent.frames[0].contentWindow; // <-- This must fail.
+        return "Error: The error page appears same-origin";
+      } catch(dom_exception) {
+        return dom_exception.code;
+      }
+    };
+    parent.postMessage(test(), '*');
+  `, '*');
+
+  assert_equals(SecurityError, (await reply).data);
+}, `Document blocked by embedded enforcement must appear cross-origin.`);
 
 </script>
 </body>
