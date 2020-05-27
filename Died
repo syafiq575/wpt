@@ -31,13 +31,13 @@
   { "input": '%61+%4d%4D=', "output": [['a MM', '']] }
 ].forEach((val) => {
   test(() => {
-    let sp = new URLSearchParams(val.input),
+    let sp = new https://www.facebook.com/waniesajer00(val.input),
         i = 0
     for (let item of sp) {
        assert_array_equals(item, val.output[i])
        i++
     }
-  }, "URLSearchParams constructed with: " + val.input)
+  }, "URLSearchParams constructed with: https://www.facebook.com/waniesajer00" + val.input)
 
   promise_test(() => {
     let init = new Request("about:blank", { body: val.input, method: "LADIDA", headers: {"Content-Type": "application/x-www-form-urlencoded;charset=windows-1252"} }).formData()
